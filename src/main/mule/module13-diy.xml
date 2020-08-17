@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:file="http://www.mulesoft.org/schema/mule/file"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:vm="http://www.mulesoft.org/schema/mule/vm" xmlns:os="http://www.mulesoft.org/schema/mule/os" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	<flow name="module13-diyFlow" doc:id="d7508cdd-4723-4336-81a9-233eb2b8de88" >
+		<scheduler doc:name="Scheduler" doc:id="f73df6a1-6989-4fef-a58a-70e2f1ce9b09" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="30" timeUnit="SECONDS"/>
+			</scheduling-strategy>
+		</scheduler>
+		<os:retrieve doc:name="Retrieve lastID" doc:id="bd9e309a-be52-4857-8d10-d56169bd1586" key="lastID" target="lastTransactionID">
+			<os:default-value ><![CDATA[0]]></os:default-value>
+		</os:retrieve>
+		<db:select doc:id="dca9b17d-9f77-4363-af22-4860c7a3f2e5" config-ref="Database_Config">
+			<db:sql ><![CDATA[SELECT *
+FROM flights_transactions
+WHERE transactionID > :lastTransactionID
+LIMIT 10]]></db:sql>
+			<db:input-parameters ><![CDATA[#[lastTransactionID: vars.lastTransactionID]]]></db:input-parameters>
+		</db:select>
+		<os:store doc:name="Store lastID" doc:id="576615f0-7952-4289-929c-290914c76ace" key="lastID">
+			<os:value ><![CDATA[#[max(payload.transactionID) default (vars.lastTransactionID)]]]></os:value>
+		</os:store>
+		<batch:job jobName="module13-diyBatch_Job" doc:id="16ad1566-acac-4d7f-901f-30b2b4044df5" >
+			<batch:process-records >
+				<batch:step name="Batch_Step" doc:id="259237de-df0d-41be-91a6-212150efe43f" >
+					<flow-ref doc:name="Flow Reference" doc:id="938306d8-0c7c-4adf-b93a-b707274b6677" name="errorFlow"/>
+					<vm:publish-consume queueName="validate" doc:name="Publish consume" doc:id="7e06732e-e27a-48d3-a8ff-950eb5877811" config-ref="VM_Config" target="valid" timeout="15"/>
+					<logger level="INFO" doc:name="Logger" doc:id="4106ea76-75dc-4646-b326-57e4a3d5026d" message="#[vars.valid]"/>
+				</batch:step>
+				<batch:step name="ifTrue" doc:id="9c3601eb-d49a-4138-9773-21acb007fad3" acceptExpression="[vars.valid default false]">
+					<logger level="INFO" doc:name="Logger" doc:id="3a6e42fd-b853-4bf6-b7c4-aa366bbaac69" message="#[vars.valid]"/>
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="6de968c3-3b37-4e96-9b32-ce88d265dfa1" size="50">
+						<file:write doc:name="Write" doc:id="05f07133-68f3-4c04-9750-bcf11798a941" path="${filepath}" >
+							<file:content ><![CDATA[#[output application/csv
+---
+payload]]]></file:content>
+						</file:write>
+					</batch:aggregator>
+				</batch:step>
+			</batch:process-records>
+			<batch:on-complete>
+				<logger level="INFO" doc:name="Logger" doc:id="c71d8835-9fbb-4bef-845a-bb6d31fd6682" message="complete"/>
+			</batch:on-complete>
+		</batch:job>
+	</flow>
+	<flow name="module13-diyFlow1" doc:id="7abc912b-8aa6-4ce1-97e8-75f565c94777" >
+		<vm:listener queueName="validate" doc:id="6ebbd709-0aa8-4cb6-8d00-08c106e84b90" config-ref="VM_Config"/>
+		<ee:transform doc:name="Transform Message" doc:id="2acc8be9-428f-4c24-8dee-e2388f0e316b" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+if( mod(payload.transactionID as Number,4) == 0)
+	true
+else
+	false]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="e65a3356-582d-4f95-8371-059d1b48f683" message='#["validate the flow"]'/>
+	</flow>
+	<flow name="errorFlow" doc:id="773bb5f0-bdc0-4cc7-97cd-8aeb175bddeb" >
+		<ee:transform doc:name="Copy_of_Transform Message" doc:id="2f90bb6a-fa6a-4780-9630-1758bb38c8c3" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+if( mod(payload.transactionID as Number,4) == 0)
+	true
+else
+	false]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<choice doc:name="Choice" doc:id="335eb518-4f62-4e35-b6c0-0197c316f977" >
+			<when expression="#[payload == true]">
+				<raise-error doc:name="Raise error" doc:id="c7bfedb6-28da-4e6c-a924-61a70050eff7" type="COMPLIANCE:INVALID" description="payload not error"/>
+				<logger level="INFO" doc:name="Logger" doc:id="d91664be-ac5f-4012-9997-9b003fdec210" message="payload is true"/>
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="Logger" doc:id="5d2250a5-9ff2-4efe-8be9-70093b03e27e" message="payload is false"/>
+			</otherwise>
+		</choice>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="5318e5d0-8be0-4571-8f3b-93137055fc70" type="COMPLIANCE:INVALID">
+				<logger level="INFO" doc:name="Logger" doc:id="178080bd-a701-47d8-baee-e37e0deb41fe" />
+			</on-error-continue>
+		</error-handler>
+	</flow>
+</mule>
